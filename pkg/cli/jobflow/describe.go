@@ -79,7 +79,11 @@ func DescribeJobFlow(ctx context.Context) error {
 			}
 			// Print space if it's not the last element
 			if len(jobFlows.Items) != 1 && i < len(jobFlows.Items)-1 {
-				fmt.Printf("\n\n")
+				if describeJobFlowFlags.Format == "yaml" {
+					fmt.Printf("\n---\n")
+				} else {
+					fmt.Printf("\n\n")
+				}
 			}
 		}
 		// Get jobflow detail

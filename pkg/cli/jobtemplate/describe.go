@@ -79,7 +79,11 @@ func DescribeJobTemplate(ctx context.Context) error {
 			}
 			// Print space if it's not the last element
 			if len(jobTemplates.Items) != 1 && i < len(jobTemplates.Items)-1 {
-				fmt.Printf("\n\n")
+				if describeJobTemplateFlags.Format == "yaml" {
+					fmt.Printf("\n---\n")
+				} else {
+					fmt.Printf("\n\n")
+				}
 			}
 		}
 		// Get job template detail

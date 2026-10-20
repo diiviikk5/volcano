@@ -23,13 +23,15 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 
 	flowv1alpha1 "volcano.sh/apis/pkg/apis/flow/v1alpha1"
+	"volcano.sh/volcano/pkg/cli/jobflow"
 	"volcano.sh/volcano/pkg/cli/util"
 )
 
@@ -544,3 +546,49 @@ spec:
                   cpu: "1"
           restartPolicy: OnFailure
 ---`
+
+func TestDescribeListProducesManifests(t *testing.T) {
+	saved := describeJobTemplateFlags
+	t.Cleanup(func() { describeJobTemplateFlags = saved })
+	for _, kind := range []string{"JobTemplate", "JobFlow"} {
+		t.Run(kind, func(t *testing.T) {
+			response := map[string]interface{}{
+				"apiVersion": "flow.volcano.sh/v1alpha1", "kind": kind + "List",
+				"items": []interface{}{
+					map[string]interface{}{"apiVersion": "flow.volcano.sh/v1alpha1", "kind": kind, "metadata": map[string]string{"name": "first", "namespace": "default"}},
+					map[string]interface{}{"apiVersion": "flow.volcano.sh/v1alpha1", "kind": kind, "metadata": map[string]string{"name": "second", "namespace": "default"}},
+				},
+			}
+			server := util.CreateTestServer(response)
+			defer server.Close()
+			initFlags, describe := InitDescribeFlags, DescribeJobTemplate
+			if kind == "JobFlow" {
+				initFlags, describe = jobflow.InitDescribeFlags, jobflow.DescribeJobFlow
+			}
+			cmd := &cobra.Command{RunE: func(cmd *cobra.Command, args []string) error { return describe(cmd.Context()) }}
+			initFlags(cmd)
+			cmd.SetArgs([]string{"--master", server.URL, "--format", "yaml"})
+			r, stdout := util.RedirectStdout()
+			defer r.Close()
+			err := cmd.Execute()
+			output := util.CaptureOutput(r, stdout)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoder := yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(output), 4096)
+			for _, name := range []string{"first", "second"} {
+				var object metav1.PartialObjectMetadata
+				if err := decoder.Decode(&object); err != nil {
+					t.Fatalf("decode %s: %v; output: %s", name, err, output)
+				}
+				if object.Name != name || object.Kind != kind || object.APIVersion != "flow.volcano.sh/v1alpha1" {
+					t.Errorf("got %s %s %s, want flow.volcano.sh/v1alpha1 %s %s", object.APIVersion, object.Kind, object.Name, kind, name)
+				}
+			}
+			var extra metav1.PartialObjectMetadata
+			if err := decoder.Decode(&extra); err != io.EOF {
+				t.Errorf("expected end of stream, got %v", err)
+			}
+		})
+	}
+}
