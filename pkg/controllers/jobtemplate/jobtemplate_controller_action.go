@@ -42,10 +42,6 @@ func (jt *jobtemplatecontroller) syncJobTemplate(jobTemplate *v1alpha1flow.JobTe
 		return err
 	}
 
-	if len(jobList) == 0 {
-		return nil
-	}
-
 	jobListName := make([]string, 0)
 	for _, job := range jobList {
 		jobListName = append(jobListName, job.Name)

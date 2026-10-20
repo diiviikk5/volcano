@@ -18,17 +18,21 @@ package jobtemplate
 
 import (
 	"context"
-	"k8s.io/apimachinery/pkg/api/equality"
 	"testing"
+	"time"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
 	kubeclient "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/cache"
 
 	"volcano.sh/apis/pkg/apis/batch/v1alpha1"
 	jobflowv1alpha1 "volcano.sh/apis/pkg/apis/flow/v1alpha1"
 	volcanoclient "volcano.sh/apis/pkg/client/clientset/versioned/fake"
 	informerfactory "volcano.sh/apis/pkg/client/informers/externalversions"
+	"volcano.sh/volcano/pkg/controllers/apis"
 	"volcano.sh/volcano/pkg/controllers/framework"
 )
 
@@ -121,5 +125,50 @@ func TestSyncJobTemplateFunc(t *testing.T) {
 				t.Error("not the expected result")
 			}
 		})
+	}
+}
+
+func TestDeletedJobReconcilesTemplate(t *testing.T) {
+	controller := newFakeController()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	template := &jobflowv1alpha1.JobTemplate{ObjectMeta: metav1.ObjectMeta{Name: "train", Namespace: "team"}}
+	if _, err := controller.vcClient.FlowV1alpha1().JobTemplates("team").Create(ctx, template, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	job := &v1alpha1.Job{ObjectMeta: metav1.ObjectMeta{
+		Name: "pipeline-train", Namespace: "team",
+		Labels: map[string]string{CreatedByJobTemplate: "team.train"},
+	}}
+	if _, err := controller.vcClient.BatchV1alpha1().Jobs("team").Create(ctx, job, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() { controller.Run(stop); close(done) }()
+	defer func() { close(stop); <-done }()
+	waitForCount := func(want int) {
+		t.Helper()
+		err := wait.PollUntilContextTimeout(ctx, 10*time.Millisecond, 2*time.Second, true, func(ctx context.Context) (bool, error) {
+			got, err := controller.vcClient.FlowV1alpha1().JobTemplates("team").Get(ctx, "train", metav1.GetOptions{})
+			return err == nil && len(got.Status.JobDependsOnList) == want, err
+		})
+		if err != nil {
+			t.Fatalf("template did not reach %d job references: %v", want, err)
+		}
+	}
+	waitForCount(1)
+	if err := controller.vcClient.BatchV1alpha1().Jobs("team").Delete(ctx, job.Name, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	waitForCount(0)
+}
+
+func TestDeleteJobTombstone(t *testing.T) {
+	var got []apis.FlowRequest
+	controller := &jobtemplatecontroller{enqueueJobTemplate: func(req apis.FlowRequest) { got = append(got, req) }}
+	job := &v1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{CreatedByJobTemplate: "team.train"}}}
+	controller.deleteJob(cache.DeletedFinalStateUnknown{Key: "team/pipeline-train", Obj: job})
+	if len(got) != 1 || got[0].Namespace != "team" || got[0].JobTemplateName != "train" {
+		t.Errorf("unexpected requests: %+v", got)
 	}
 }

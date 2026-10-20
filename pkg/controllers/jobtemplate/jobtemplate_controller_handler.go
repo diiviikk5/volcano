@@ -19,6 +19,7 @@ package jobtemplate
 import (
 	"strings"
 
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	batch "volcano.sh/apis/pkg/apis/batch/v1alpha1"
@@ -68,4 +69,11 @@ func (jt *jobtemplatecontroller) addJob(obj interface{}) {
 		JobTemplateName: name,
 	}
 	jt.enqueueJobTemplate(req)
+}
+
+func (jt *jobtemplatecontroller) deleteJob(obj interface{}) {
+	if tombstone, ok := obj.(cache.DeletedFinalStateUnknown); ok {
+		obj = tombstone.Obj
+	}
+	jt.addJob(obj)
 }

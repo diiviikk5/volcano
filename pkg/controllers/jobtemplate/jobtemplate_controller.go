@@ -98,7 +98,8 @@ func (jt *jobtemplatecontroller) Initialize(opt *framework.ControllerOption) err
 	jt.jobSynced = jt.jobInformer.Informer().HasSynced
 	jt.jobLister = jt.jobInformer.Lister()
 	jt.jobInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: jt.addJob,
+		AddFunc:    jt.addJob,
+		DeleteFunc: jt.deleteJob,
 	})
 
 	jt.maxRequeueNum = opt.MaxRequeueNum
